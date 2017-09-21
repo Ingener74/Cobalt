@@ -2,12 +2,13 @@ import json
 import os
 import sys
 
-from PyQt5.QtCore import Qt, QThread, QMutex, QWaitCondition, QDateTime
+from PyQt5.QtCore import Qt, QThread, QMutex, QWaitCondition, QDateTime, pyqtSignal
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication, QWidget, QMenu, QSystemTrayIcon
 from pynput.mouse import Listener, Button, Controller
 
 from mainwidget import Ui_MainWidget
+from startrecord import Ui_WidgetStartRecord
 
 
 class MainWidget(QWidget, Ui_MainWidget):
@@ -15,16 +16,44 @@ class MainWidget(QWidget, Ui_MainWidget):
         QWidget.__init__(self, parent, Qt.Window)
         self.setupUi(self)
 
+        self.mouse = None
+        self.start_widget = StartRecordWidget(self)
+
     def keyPressEvent(self, q_key_event):
         if q_key_event.key() == Qt.Key_Escape:
             self.close()
+
+    def start_record(self):
+        self.start_widget.on_start.connect(self.on_start_record)
+        self.start_widget.show()
+
+    def on_start_record(self, name, description):
+        self.mouse = MouseThread()
+        self.mouse.start()
+
+
+class StartRecordWidget(QWidget, Ui_WidgetStartRecord):
+    on_start = pyqtSignal(str, str)
+
+    def __init__(self, parent=None):
+        QWidget.__init__(self, parent, Qt.Window)
+        self.setupUi(self)
+        self.pushButtonStart.clicked.connect(self.on_start_clicked)
+
+    def on_start_clicked(self):
+        if len(self.lineEditName.text()) > 0:
+            self.on_start.emit(self.lineEditName.text(), self.textEditDescription.toPlainText())
+            self.hide()
+
+    def closeEvent(self, q_close_event):
+        self.hide()
 
 
 class MouseThread(QThread):
     MOVE = 0
     CLICK = 1
 
-    def __init__(self, events=None, parent=None):
+    def __init__(self, parent=None, events=None):
         QThread.__init__(self, parent)
 
         self.rec = False
@@ -42,7 +71,7 @@ class MouseThread(QThread):
 
     def on_click(self, x, y, button, pressed):
         if self.rec:
-            if button == Button.right and pressed:
+            if button == Button.middle and pressed:
                 self.rec = False
                 return False
             self.events.append({'type': MouseThread.CLICK,
@@ -75,7 +104,6 @@ class MouseThread(QThread):
                             event['x'] = self.events[idx + 1]['x'] - event['x']
                             event['y'] = self.events[idx + 1]['y'] - event['y']
                             yield event
-
                     return None
 
                 for event in next_event():
@@ -83,10 +111,13 @@ class MouseThread(QThread):
                         if event['type'] == MouseThread.MOVE:
                             mouse.move(event['x'], event['y'])
                         elif event['type'] == MouseThread.CLICK:
+                            b = Button.left if event['button'] == Button.left.value else \
+                                Button.right if event['button'] == Button.right.value else \
+                                    Button.middle
                             if event['pressed']:
-                                mouse.press(Button.left)
+                                mouse.press(b)
                             else:
-                                mouse.release(Button.left)
+                                mouse.release(b)
             finally:
                 self.mutex.unlock()
         else:
@@ -109,7 +140,8 @@ def create_and_show_tray():
     menu = QMenu()
 
     do_action = menu.addAction('Record')
-    do_action.triggered.connect(mouseThread.record)
+    # do_action.triggered.connect(mouseThread.record)
+    do_action.triggered.connect(mainWidget.start_record)
 
     play_action = menu.addAction('Play')
     play_action.triggered.connect(mouseThread.play)
@@ -135,7 +167,7 @@ app = QApplication(sys.argv)
 
 mainWidget = MainWidget()
 
-mouseThread = MouseThread(json.load(open('record')) if os.path.isfile('record') else None)
+mouseThread = MouseThread(events=json.load(open('record')) if os.path.isfile('record') else None)
 mouseThread.start()
 
 tray = create_and_show_tray()
