@@ -1,14 +1,13 @@
 import json
-import sys
 import os
+import sys
 
-from mainwidget import Ui_MainWidget
-
-from pynput.mouse import Listener, Button
-
-from PyQt5.QtCore import Qt, QThread, QMutex, QWaitCondition, QMutexLocker
+from PyQt5.QtCore import Qt, QThread, QMutex, QWaitCondition, QDateTime
 from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication, QWidget, QMenu, QSystemTrayIcon
+from pynput.mouse import Listener, Button, Controller
+
+from mainwidget import Ui_MainWidget
 
 
 class MainWidget(QWidget, Ui_MainWidget):
@@ -38,7 +37,8 @@ class MouseThread(QThread):
         if self.rec:
             self.events.append({'type': MouseThread.MOVE,
                                 'x': x,
-                                'y': y})
+                                'y': y,
+                                'ts': QDateTime.currentDateTime().toMSecsSinceEpoch()})
 
     def on_click(self, x, y, button, pressed):
         if self.rec:
@@ -49,7 +49,8 @@ class MouseThread(QThread):
                                 'x': x,
                                 'y': y,
                                 'button': button.value,
-                                'pressed': pressed})
+                                'pressed': pressed,
+                                'ts': QDateTime.currentDateTime().toMSecsSinceEpoch()})
         if not pressed:
             return True
 
@@ -58,12 +59,34 @@ class MouseThread(QThread):
 
     def run(self):
         if len(self.events) > 0:
+            mouse = Controller()
+
             try:
                 self.mutex.lock()
                 self.cond.wait(self.mutex)
 
-                print("Have Fun")
+                if len(self.events) > 0:
+                    mouse.position = (self.events[0]['x'], self.events[0]['y'])
 
+                def next_event():
+                    for idx, event in enumerate(self.events):
+                        if idx < len(self.events) - 1:
+                            QThread.msleep(self.events[idx + 1]['ts'] - self.events[idx]['ts'])
+                            event['x'] = self.events[idx + 1]['x'] - event['x']
+                            event['y'] = self.events[idx + 1]['y'] - event['y']
+                            yield event
+
+                    return None
+
+                for event in next_event():
+                    if event is not None:
+                        if event['type'] == MouseThread.MOVE:
+                            mouse.move(event['x'], event['y'])
+                        elif event['type'] == MouseThread.CLICK:
+                            if event['pressed']:
+                                mouse.press(Button.left)
+                            else:
+                                mouse.release(Button.left)
             finally:
                 self.mutex.unlock()
         else:
