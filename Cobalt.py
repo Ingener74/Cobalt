@@ -2,12 +2,13 @@ import json
 import os
 import sys
 
-from PyQt5.QtCore import Qt, QThread, QMutex, QWaitCondition, QDateTime, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, QMutex, QWaitCondition, QDateTime, pyqtSignal, QRegularExpression
 from PyQt5.QtGui import QIcon
-from PyQt5.QtWidgets import QApplication, QWidget, QMenu, QSystemTrayIcon
+from PyQt5.QtWidgets import QApplication, QWidget, QMenu, QSystemTrayIcon, QMessageBox
 from pynput.mouse import Listener, Button, Controller
 
 from mainwidget import Ui_MainWidget
+from selectrecord import Ui_WidgetSelectRecord
 from startrecord import Ui_WidgetStartRecord
 
 
@@ -18,18 +19,34 @@ class MainWidget(QWidget, Ui_MainWidget):
 
         self.mouse = None
         self.start_widget = StartRecordWidget(self)
+        self.start_widget.on_start.connect(self.on_start_record)
+
+        self.select_widget = SelectRecordWidget(self)
+
+        self.records = json.load(open('records.json', 'r')) if os.path.isfile('records.json') else []
 
     def keyPressEvent(self, q_key_event):
         if q_key_event.key() == Qt.Key_Escape:
             self.close()
 
-    def start_record(self):
-        self.start_widget.on_start.connect(self.on_start_record)
-        self.start_widget.show()
+    def on_record_end(self):
+        self.mouse.save()
+        QMessageBox.critical(None, 'Info', 'Record recorded')
+
+    def on_record_saved(self, name, description, file_name):
+        self.records.append({
+            'name': name,
+            'description': description,
+            'file_name': file_name
+        })
+        json.dump(self.records, open('records.json', 'w+'), indent=True)
 
     def on_start_record(self, name, description):
-        self.mouse = MouseThread()
+        self.mouse = MouseThread(name=name, description=description)
+        self.mouse.record_end.connect(self.on_record_end)
+        self.mouse.record_saved.connect(self.on_record_saved)
         self.mouse.start()
+        self.mouse.record()
 
 
 class StartRecordWidget(QWidget, Ui_WidgetStartRecord):
@@ -38,26 +55,66 @@ class StartRecordWidget(QWidget, Ui_WidgetStartRecord):
     def __init__(self, parent=None):
         QWidget.__init__(self, parent, Qt.Window)
         self.setupUi(self)
+        self.re = QRegularExpression('[_a-zA-Z0-9]+')
         self.pushButtonStart.clicked.connect(self.on_start_clicked)
+        self.pushButtonStart.setEnabled(False)
+        self.lineEditName.textChanged.connect(self.on_name_changed)
 
     def on_start_clicked(self):
         if len(self.lineEditName.text()) > 0:
             self.on_start.emit(self.lineEditName.text(), self.textEditDescription.toPlainText())
             self.hide()
 
+    def on_name_changed(self, text):
+        match = self.re.match(text)
+        match_captured_text = match.hasMatch() and match.captured(0) == text
+        self.pushButtonStart.setEnabled(match_captured_text)
+        self.lineEditName.setStyleSheet('background-color: #48FA7E' if match_captured_text else
+                                        'background-color: #FA4848')
+
+    def keyPressEvent(self, q_key_event):
+        if q_key_event.key() == Qt.Key_Escape:
+            self.hide()
+
     def closeEvent(self, q_close_event):
         self.hide()
+        q_close_event.ignore()
+
+
+class SelectRecordWidget(QWidget, Ui_WidgetSelectRecord):
+    def __init__(self, parent=None):
+        QWidget.__init__(self, parent, Qt.Window)
+        self.setupUi(self)
+        self.pushButtonStart.setEnabled(False)
+
+    def closeEvent(self, q_close_event):
+        self.hide()
+        q_close_event.ignore()
+
+    def keyPressEvent(self, q_key_event):
+        if q_key_event.key() == Qt.Key_Escape:
+            self.hide()
 
 
 class MouseThread(QThread):
     MOVE = 0
     CLICK = 1
 
-    def __init__(self, parent=None, events=None):
+    record_end = pyqtSignal()
+    record_saved = pyqtSignal(str, str, str)
+
+    def __init__(self, parent=None, name='', description='', record=None):
         QThread.__init__(self, parent)
 
         self.rec = False
-        self.events = events or []
+        if record is None:
+            self.name = name
+            self.description = description
+            self.events = []
+        else:
+            self.name = record['name']
+            self.description = record['description']
+            self.events = record['events']
 
         self.mutex = QMutex()
         self.cond = QWaitCondition()
@@ -73,6 +130,7 @@ class MouseThread(QThread):
         if self.rec:
             if button == Button.middle and pressed:
                 self.rec = False
+                self.record_end.emit()
                 return False
             self.events.append({'type': MouseThread.CLICK,
                                 'x': x,
@@ -132,7 +190,11 @@ class MouseThread(QThread):
             self.cond.wakeOne()
 
     def save(self):
-        json.dump(self.events, open('record', 'w+'), indent=True)
+        json_file_name = self.name + '_' + QDateTime.currentDateTime().toString('hh_mm_dd_MM_yyyy') + '.json'
+        json.dump({'name': self.name,
+                   'description': self.description,
+                   'events': self.events}, open(json_file_name, 'w+'), indent=True)
+        self.record_saved.emit(self.name, self.description, json_file_name)
 
 
 def create_and_show_tray():
@@ -140,18 +202,16 @@ def create_and_show_tray():
     menu = QMenu()
 
     do_action = menu.addAction('Record')
-    # do_action.triggered.connect(mouseThread.record)
-    do_action.triggered.connect(mainWidget.start_record)
+    do_action.triggered.connect(main_widget.start_widget.show)
 
     play_action = menu.addAction('Play')
-    play_action.triggered.connect(mouseThread.play)
+    play_action.triggered.connect(main_widget.select_widget.show)
 
     show_main_widget = menu.addAction('Show settings')
-    show_main_widget.triggered.connect(mainWidget.show)
+    show_main_widget.triggered.connect(main_widget.show)
 
     def on_close():
-        mouseThread.save()
-        mainWidget.close()
+        main_widget.close()
 
     close_action = menu.addAction('Close')
     close_action.triggered.connect(on_close)
@@ -165,10 +225,7 @@ def create_and_show_tray():
 
 app = QApplication(sys.argv)
 
-mainWidget = MainWidget()
-
-mouseThread = MouseThread(events=json.load(open('record')) if os.path.isfile('record') else None)
-mouseThread.start()
+main_widget = MainWidget()
 
 tray = create_and_show_tray()
 
