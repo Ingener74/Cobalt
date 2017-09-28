@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>274</width>
-    <height>269</height>
+    <height>241</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -17,33 +17,16 @@
    <iconset resource="resources.qrc">
     <normaloff>:/main/main.png</normaloff>:/main/main.png</iconset>
   </property>
-  <layout class="QVBoxLayout" name="verticalLayout_2">
+  <layout class="QVBoxLayout" name="verticalLayout">
    <item>
-    <widget class="QTableWidget" name="tableWidgetSelect"/>
+    <widget class="QListWidget" name="listWidgetSelect"/>
    </item>
    <item>
-    <layout class="QVBoxLayout" name="verticalLayout">
-     <item>
-      <spacer name="horizontalSpacer">
-       <property name="orientation">
-        <enum>Qt::Horizontal</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>40</width>
-         <height>20</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-     <item>
-      <widget class="QPushButton" name="pushButtonStart">
-       <property name="text">
-        <string>Старт</string>
-       </property>
-      </widget>
-     </item>
-    </layout>
+    <widget class="QPushButton" name="pushButtonStart">
+     <property name="text">
+      <string>Старт</string>
+     </property>
+    </widget>
    </item>
   </layout>
  </widget>
